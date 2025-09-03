@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Explorer de Servidores", layout="wide")
--
 def normalize_columns(cols):
     def strip_accents(s):
         return "".join(ch for ch in (
