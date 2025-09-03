@@ -1,0 +1,8 @@
+# Ignorar planilhas locais
+*.xlsx
+*.xls
+*.csv
+
+# Ignorar ambiente virtual
+.venv/
+__pycache__/
