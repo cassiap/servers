@@ -5,10 +5,8 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Explorer de Servidores", layout="wide")
-
-# ---------------- Utils ----------------
+-
 def normalize_columns(cols):
-    # similar to unidecode without dependency
     def strip_accents(s):
         return "".join(ch for ch in (
             unicodedata.normalize("NFD", s)
@@ -16,7 +14,6 @@ def normalize_columns(cols):
     out = []
     for c in cols.astype(str):
         s = strip_accents(c).lower()
-        # replace non-alnum with underscore
         import re
         s = re.sub(r"[^a-z0-9_]+", "_", s)
         s = re.sub(r"_{2,}", "_", s).strip("_")
@@ -25,14 +22,12 @@ def normalize_columns(cols):
 
 @st.cache_data
 def load_data(source):
-    """Carrega Excel/CSV do caminho local ou do uploader e normaliza nomes de colunas."""
     def _read(_src):
         name = _src if isinstance(_src, str) else _src.name
         name_l = name.lower()
         if name_l.endswith((".xlsx", ".xls")):
             return pd.read_excel(_src, engine="openpyxl")
         elif name_l.endswith(".csv"):
-            # sep=None deixa o pandas detectar ; , \t automaticamente
             return pd.read_csv(_src, sep=None, engine="python")
         else:
             raise ValueError("Formato não suportado. Use .xlsx/.xls ou .csv.")
@@ -42,7 +37,6 @@ def load_data(source):
     return df
 
 ALIASES = {
-    # Mapeia para o que o app entende
     "equipe": [
         "equipe", "team", "squad",
         "equipe_responsavel", "equipe_responsavel_pelo_servidor"
@@ -56,7 +50,7 @@ ALIASES = {
     ],
     "hostname": [
         "hostname", "host", "servidor", "server", "fqdn",
-        "nome"  # usando 'Nome' como identificador do servidor
+        "nome" 
     ],
     "ambiente": [
         "ambiente", "environment", "env", "entorno"
@@ -87,7 +81,6 @@ def text_search(df, cols, query):
             mask = mask | df[c].astype(str).str.contains(query, case=False, na=False)
     return df[mask]
 
-# ---------------- Load data ----------------
 st.sidebar.header("Dados")
 
 uploaded = st.sidebar.file_uploader("Envie um Excel (.xlsx) ou CSV", type=["xlsx","xls","csv"])
@@ -96,11 +89,9 @@ source = None
 if uploaded is not None:
     source = uploaded
 else:
-    # 1) tenta servidores.xlsx
     if os.path.exists("servidores.xlsx"):
         source = "servidores.xlsx"
     else:
-        # 2) tenta qualquer .xlsx na pasta (ex.: FULL MIDD - 2025.xlsx)
         xlsx_list = sorted(glob.glob("*.xlsx"))
         if xlsx_list:
             source = xlsx_list[0]
@@ -109,12 +100,10 @@ if source is None:
     st.info("Envie um arquivo na barra lateral **ou** coloque um **.xlsx** (ex.: FULL MIDD - 2025.xlsx) na mesma pasta do app.")
     st.stop()
 
-# Normalization needs unicodedata
-import unicodedata  # noqa: E402
+import unicodedata  
 
 df = load_data(source)
 
-# ---------------- Detect columns ----------------
 col_equipe = pick_col(df, ALIASES["equipe"])
 col_sistema = pick_col(df, ALIASES["sistema"])
 col_desc   = pick_col(df, ALIASES["descricao"])
@@ -128,7 +117,6 @@ if miss:
     st.warning("Colunas essenciais não encontradas: " + ", ".join(miss) + ". "
                "Dica: use cabeçalhos como 'Equipe Responsável', 'Sistema/Serviço/Produto', 'Descrição do IC', 'Nome' (ou 'Hostname').")
 
-# ---------------- Filters ----------------
 st.sidebar.header("Filtros")
 
 # 1) Equipe
@@ -155,11 +143,10 @@ desc_sel = st.sidebar.multiselect("Descrição", desc_opts)
 
 df_f = filter_df(df_f, col_desc, desc_sel)
 
-# 5) Busca textual
+# 5) Busca
 query = st.sidebar.text_input("Busca (hostname/nome/descrição)", placeholder="ex.: web01, prd, oracle")
 df_f = text_search(df_f, [col_host, col_desc], query)
 
-# ---------------- Header & Metrics ----------------
 st.title("Explorer de Servidores")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total (base)", len(df))
@@ -169,28 +156,23 @@ if col_equipe:
 if col_amb:
     c4.metric("Ambientes", df[col_amb].nunique())
 
-# ---------------- Main table ----------------
 st.dataframe(df_f, use_container_width=True)
 
-# ---------------- Details view (all columns) ----------------
 st.subheader("Detalhes do servidor (todas as colunas)")
 id_col = col_host if col_host else (col_desc if col_desc else None)
 if id_col:
-    # cria uma lista amigável para escolher um servidor entre os filtrados
     ids = df_f[id_col].dropna().astype(str).unique().tolist()
     if ids:
         chosen = st.selectbox("Selecione um servidor", ids)
         row = df_f[df_f[id_col].astype(str) == str(chosen)]
         if len(row) >= 1:
             st.write("Registro encontrado:")
-            # mostrar todas as colunas transpostas para leitura fácil
             st.table(row.iloc[0].T.reset_index().rename(columns={"index": "Campo", 0: "Valor"}))
     else:
         st.caption("Nenhum servidor disponível com os filtros atuais.")
 else:
     st.caption("Não foi possível identificar a coluna de servidor (Hostname/Nome).")
 
-# ---------------- Charts ----------------
 if col_sistema:
     st.subheader("Servidores por Sistema (após filtros)")
     chart_sis = df_f.groupby(col_sistema).size().sort_values(ascending=False).head(20)
@@ -201,7 +183,6 @@ if col_amb:
     chart_amb = df_f.groupby(col_amb).size().sort_values(ascending=False)
     st.bar_chart(chart_amb)
 
-# ---------------- Download ----------------
 def to_csv_bytes(_df):
     out = BytesIO()
     _df.to_csv(out, index=False)
