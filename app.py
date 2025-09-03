@@ -1,12 +1,13 @@
 import os
 import glob
 import unicodedata
+import html
 from io import BytesIO
 
 import pandas as pd
 import streamlit as st
 
-# ===================== Config & CSS =====================
+# ===================== CSS =====================
 st.set_page_config(page_title="Explorer de Servidores", layout="wide", menu_items={
     "Get Help": None, "Report a bug": None, "About": None
 })
@@ -23,10 +24,22 @@ footer{visibility:hidden;}
 .badge.qa{background:#a855f7;color:#fff}
 .badge.trans{background:#f59e0b;color:#000}
 .badge.white{background:#e5e7eb;color:#000;border:1px solid #cbd5e1}
+
+/* -------- clamp de células: até 3 linhas com reticências -------- */
+table.dataframe { table-layout: fixed; width: 100%; }
+table.dataframe th, table.dataframe td { max-width: 320px; vertical-align: top; }
+table.dataframe td div.clip, table.dataframe th div.clip {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;       /* <= nº de linhas visíveis */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ===================== Helpers =====================
 def _strip_accents(text: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn")
 
@@ -45,7 +58,6 @@ def build_colmap(original_cols):
 
 @st.cache_data
 def load_data(source):
-    """Load Excel/CSV and return (df_norm, map_norm2orig)."""
     def _read(_src):
         name = _src if isinstance(_src, str) else _src.name
         n = name.lower()
@@ -63,7 +75,6 @@ def load_data(source):
     df.columns = [map_orig2norm[c] for c in df0.columns]
     return df, map_norm2orig
 
-# aliases para reconhecer seus cabeçalhos reais
 ALIASES = {
     "equipe":   ["equipe", "team", "squad", "equipe_responsavel", "equipe_responsavel_pelo_servidor"],
     "sistema":  ["sistema", "application", "app", "sistema_servico_produto", "sistema_aplicacao"],
@@ -113,16 +124,13 @@ def to_xlsx_bytes(df):
     return bio.getvalue()
 
 def parse_server_list(raw: str):
-    """Recebe texto colado (linhas, vírgulas, espaços) e retorna lista única normalizada (lower/strip)."""
     if not raw:
         return []
-    # separa por quebras, vírgulas, ponto-e-vírgula ou espaço
     parts = []
     for token in raw.replace(",", "\n").replace(";", "\n").split():
         token = token.strip()
         if token:
             parts.append(token.lower())
-    # remove duplicados preservando ordem
     seen, out = set(), []
     for p in parts:
         if p not in seen:
@@ -130,7 +138,17 @@ def parse_server_list(raw: str):
             out.append(p)
     return out
 
-# ===================== Load data =====================
+def cell_html(value, rich=False):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        txt = ""
+    else:
+        txt = str(value).replace("\r\n", " ").replace("\n", " ")
+    if rich:
+        inner = txt
+    else:
+        inner = html.escape(txt)
+    return f"<div class='clip' title='{html.escape(txt)}'>{inner}</div>"
+
 st.sidebar.header("Dados")
 uploaded = st.sidebar.file_uploader("Envie um Excel (.xlsx) ou CSV", type=["xlsx","xls","csv"])
 
@@ -157,10 +175,8 @@ col_host   = pick_col(df, ALIASES["hostname"])
 col_amb    = pick_col(df, ALIASES["ambiente"])
 col_status = pick_col(df, ALIASES["status"])
 
-# ===================== Sidebar Filters =====================
 st.sidebar.header("Filtros")
 
-# sem filtros por padrão (default=[])
 equipe_opts = sorted(df[col_equipe].dropna().unique()) if col_equipe else []
 equipe_sel  = st.sidebar.multiselect("Equipe", equipe_opts, default=[])
 df_f = filter_df(df, col_equipe, equipe_sel)
@@ -177,11 +193,9 @@ desc_opts = sorted(df_f[col_desc].dropna().unique()) if col_desc else []
 desc_sel  = st.sidebar.multiselect("Descrição", desc_opts, default=[])
 df_f = filter_df(df_f, col_desc, desc_sel)
 
-# busca textual
 query = st.sidebar.text_input("Busca (hostname/nome/descrição)", placeholder="ex.: web01, prd, oracle")
 df_f = text_search(df_f, [col_host, col_desc], query)
 
-# COLAR LISTA DE SERVIDORES (40, 100…)
 st.sidebar.subheader("Colar lista de servidores")
 paste_text = st.sidebar.text_area(
     "Cole aqui (um por linha, vírgula ou espaço)",
@@ -194,13 +208,11 @@ if id_col and paste_text:
     wanted = parse_server_list(paste_text)  # tudo em lower()
     series_lower = df_f[id_col].astype(str).str.lower()
     if match_contains:
-        # mantém linhas onde qualquer 'wanted' está contido no id
         mask = series_lower.apply(lambda x: any(w in x for w in wanted))
         df_f = df_f[mask]
     else:
         df_f = df_f[series_lower.isin(wanted)]
 
-# ===================== View Options =====================
 st.sidebar.header("Opções de visualização")
 all_cols = list(df_f.columns)
 default_cols = [c for c in [col_host, col_equipe, col_amb, col_sistema, col_desc] if c and c in all_cols]
@@ -212,7 +224,6 @@ page_size = st.sidebar.selectbox("Linhas por página", [25, 50, 100, 200], index
 max_page = max(1, (len(df_f) + page_size - 1) // page_size)
 page = st.sidebar.number_input("Página", min_value=1, max_value=int(max_page), value=1, step=1)
 
-# ===================== Header & Metrics =====================
 st.title("Explorer de Servidores")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total (base)", len(df))
@@ -220,10 +231,9 @@ c2.metric("Filtrados", len(df_f))
 if col_equipe: c3.metric("Equipes", df[col_equipe].nunique())
 if col_amb:    c4.metric("Ambientes", df[col_amb].nunique())
 
-# ===================== Main Table =====================
 disp = df_f.copy()
 
-# badge de ambiente
+amb_disp_name = None
 if col_amb and col_amb in disp.columns:
     disp["_amb_badge"] = disp[col_amb].astype(str).map(badge_for_amb)
     amb_disp_name = colmap.get(col_amb, col_amb)
@@ -234,27 +244,25 @@ if col_amb and col_amb in disp.columns:
 rename_back = {c: colmap.get(c, c) for c in disp.columns if c in colmap}
 disp.rename(columns=rename_back, inplace=True)
 
-# mapeia seleção (nomes normalizados) -> nomes de exibição
-to_show = []
-for c in cols_selected:
-    to_show.append(colmap.get(c, c))
-to_show = [c for c in to_show if c in disp.columns]
-
+to_show = [colmap.get(c, c) for c in cols_selected if (colmap.get(c, c) in disp.columns)]
 # paginação
 start = (int(page)-1)*int(page_size)
 end = start + int(page_size)
 disp_page = disp[to_show].iloc[start:end] if to_show else disp.iloc[start:end]
 
-st.write(f"Mostrando linhas {start+1}–{min(end, len(disp))} de {len(disp)}")
-st.write(disp_page.to_html(escape=False, index=False), unsafe_allow_html=True)
+rich_cols = {amb_disp_name} if amb_disp_name else set()
+disp_vis = disp_page.copy()
+for c in disp_vis.columns:
+    is_rich = c in rich_cols  # preserva HTML do badge
+    disp_vis[c] = disp_vis[c].apply(lambda v: cell_html(v, rich=is_rich))
 
-# ===================== Details (multi automática pela lista colada) =====================
+st.write(f"Mostrando linhas {start+1}–{min(end, len(disp))} de {len(disp)}")
+st.write(disp_vis.to_html(escape=False, index=False, classes="dataframe"), unsafe_allow_html=True)
+
 st.subheader("Detalhes do servidor (todas as colunas)")
 if id_col and id_col in df_f.columns and not df_f.empty:
-    # Se colou lista, usamos ela para a ordem; caso contrário, oferecemos seleção simples
     if paste_text:
         wanted_display = parse_server_list(paste_text)
-        # reconstitui valores reais (case original) preservando ordem colada
         id_series = df_f[id_col].astype(str)
         chosen_list = []
         for w in wanted_display:
@@ -299,4 +307,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-st.caption("Cole vários servidores na barra lateral para filtrar de uma vez. Cabeçalhos reconhecidos: 'Equipe Responsável', 'Sistema/Serviço/Produto', 'Descrição do IC', 'Nome'/'Hostname', 'Ambiente'.")
+st.caption("Cole vários servidores na barra lateral para filtrar de uma vez. Linhas da tabela são limitadas visualmente a 3 linhas (passe o mouse para ver o conteúdo completo).")
